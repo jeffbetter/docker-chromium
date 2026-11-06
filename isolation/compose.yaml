@@ -1,0 +1,105 @@
+# Overlay only: official jlesage/chromium plus a dedicated Trojan egress.
+# Chromium shares the egress netns so it has no independent default route.
+# That share is NOT the kill-switch. The kill-switch is: nft DROP, deleted
+# default routes, Docker DNS removed, IPv6 disabled, TUN/strict_route.
+# Browser has no NET_ADMIN, no host network, no docker.sock.
+
+name: iso-${ISO_IDENTITY:-unset}
+
+services:
+  egress:
+    build:
+      context: ./egress
+    image: iso-chromium-egress:1.14.4
+    container_name: iso-${ISO_IDENTITY}-egress
+    hostname: iso-${ISO_IDENTITY}-egress
+    restart: unless-stopped
+    init: true
+    privileged: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TROJAN_SERVER: ${TROJAN_SERVER}
+      TROJAN_PORT: ${TROJAN_PORT}
+      TROJAN_PASSWORD: ${TROJAN_PASSWORD}
+      TROJAN_SNI: ${TROJAN_SNI}
+      TROJAN_ALPN: ${TROJAN_ALPN:-h2,http/1.1}
+      TROJAN_CERTIFICATE_PATH: ${TROJAN_CERTIFICATE_PATH:-}
+      TROJAN_BIND_INTERFACE: ${TROJAN_BIND_INTERFACE:-}
+      VNC_PORT: "5900"
+      ISO_SKIP_SINGBOX: ${ISO_SKIP_SINGBOX:-0}
+    ports:
+      - "127.0.0.1:${HOST_VNC_PORT}:5900"
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
+      net.ipv6.conf.default.disable_ipv6: "1"
+    networks:
+      iso-egress: {}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    stop_grace_period: 10s
+    tmpfs:
+      - /run/iso:mode=0755,size=8m
+    read_only: false
+    labels:
+      iso.identity: ${ISO_IDENTITY}
+      iso.role: egress
+
+  chromium:
+    image: ${CHROMIUM_IMAGE:-jlesage/chromium:v26.10.1}
+    container_name: iso-${ISO_IDENTITY}-chromium
+    hostname: iso-${ISO_IDENTITY}-chromium
+    restart: unless-stopped
+    privileged: false
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_healthy
+    cap_drop:
+      - NET_ADMIN
+      - NET_RAW
+      - NET_BIND_SERVICE
+      - SYS_MODULE
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:true
+    shm_size: "2gb"
+    stop_grace_period: 30s
+    stop_signal: SIGTERM
+    environment:
+      USER_ID: ${USER_ID:-1000}
+      GROUP_ID: ${GROUP_ID:-1000}
+      TZ: ${TZ:-America/New_York}
+      LANG: ${LANG:-zh_CN.UTF-8}
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      KEEP_APP_RUNNING: "0"
+      WEB_LISTENING_PORT: "-1"
+      VNC_LISTENING_PORT: "5900"
+      VNC_LOCALHOST_ONLY: "0"
+      SECURE_CONNECTION: "0"
+      ENABLE_CJK_FONT: ${ENABLE_CJK_FONT:-1}
+      CHROMIUM_REMOTE_DEBUGGING: "0"
+      CHROMIUM_CUSTOM_ARGS: "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+    volumes:
+      - ${ISO_DATA_DIR}:/config:rw
+      - ./chromium/isolation-policies.json:/etc/chromium/policies/managed/isolation.json:ro
+    labels:
+      iso.identity: ${ISO_IDENTITY}
+      iso.role: browser
+
+networks:
+  iso-egress:
+    name: iso-${ISO_IDENTITY}-egress
+    driver: bridge
+    enable_ipv6: false
+    internal: false

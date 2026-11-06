@@ -1,0 +1,25 @@
+name: Isolation overlay
+
+on:
+  pull_request:
+    paths:
+      - "isolation/**"
+      - ".github/workflows/isolation-overlay.yml"
+  push:
+    paths:
+      - "isolation/**"
+      - ".github/workflows/isolation-overlay.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  overlay-tests:
+    name: Syntax and isolation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and config mapping
+        run: isolation/tests/test-syntax.sh
+      - name: Kill-switch isolation
+        run: isolation/tests/test-isolation.sh
