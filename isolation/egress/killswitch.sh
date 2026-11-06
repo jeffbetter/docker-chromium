@@ -78,6 +78,7 @@ table inet iso_killswitch {
     chain input {
         type filter hook input priority filter; policy drop;
         iif lo accept
+        iifname "tun0" accept
         ct state established,related accept
         tcp dport ${vnc_port} accept
     }
@@ -140,7 +141,13 @@ iso_install_tun_default() {
     n=0
     while [ "${n}" -lt 50 ]; do
         if ip link show tun0 >/dev/null 2>&1; then
-            ip -4 route replace default dev tun0
+            # Prefer the TUN peer (sing-box auto_route table 2022 uses this).
+            # Point-to-point "dev tun0" alone can black-hole kernel TCP.
+            if ip -4 addr show tun0 | grep -q '10.255.254.1'; then
+                ip -4 route replace default via 10.255.254.2 dev tun0
+            else
+                ip -4 route replace default dev tun0
+            fi
             return 0
         fi
         n=$((n + 1))

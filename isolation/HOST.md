@@ -13,6 +13,7 @@
 | 内核 | **≥ 4.18**（推荐 5.15+ / 6.x） | Docker 已去掉对 kernel &lt; 4.0 / fuse-overlayfs &lt; 4.18 的 EL7 特例（moby#49184、#48208）。nftables 主线自 3.13；EL7 的 3.10 是回移植，Alpine 容器里的现代 `nft` 用户态 **未验证** |
 | Docker | Engine + **Compose v2**（`docker compose`）已安装且 daemon 可用 | 现行 `docker-ce.spec` 仍 `Requires: nftables`，打包目标是 RHEL 8/9/10、CentOS Stream 9/10、Fedora，**不再构建 CentOS 7**（docker-ce-packaging `88a6cdc`，v27.0 起） |
 | TUN | 宿主机存在 `/dev/net/tun` | egress 需要 TUN；**有 TUN ≠ 可以跑 overlay** |
+| CPU | 原生 **linux/amd64 或 linux/arm64** | `jlesage/chromium:v26.10.1` 与 `sing-box:v1.14.4` 官方 index 均含 arm64。禁止 qemu/amd64 模拟 |
 | 内存 | `MemTotal` **≥ 2048 MiB** 才允许尝试 | 见下文；**不是** 已测够用值 |
 | kill-switch | 容器内 `nft` + 内核 `nf_tables` | 不用宿主机 `iptables` 1.4.x 当 kill-switch |
 

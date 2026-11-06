@@ -357,6 +357,13 @@ EOF
 run_netns_isolation
 run_docker_isolation
 run_compose_shared_netns
+echo "== isolation: TUN TCP via local Trojan TLS =="
+if "${TEST_DIR}/test-tun-tcp.sh"; then
+    echo "  TUN TCP positive path exercised (local fixture; not a user node)"
+else
+    echo "FAIL: TUN TCP fixture" >&2
+    FAILED=1
+fi
 
 echo
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
@@ -369,4 +376,4 @@ if [ "${FAILED}" -ne 0 ]; then
     echo "isolation tests FAILED"
     exit 1
 fi
-echo "isolation tests passed (kill-switch primitives only; live public IP / logins / browser traffic were not probed)"
+echo "isolation tests passed (kill-switch primitives + local TUN TCP fixture; live user Trojan / browser were not probed)"

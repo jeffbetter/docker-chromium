@@ -55,7 +55,7 @@ services:
       iso.role: egress
 
   chromium:
-    image: ${CHROMIUM_IMAGE:-jlesage/chromium:v26.10.1}
+    image: ${CHROMIUM_IMAGE:-jlesage/chromium:v26.10.1@sha256:71e2e8468eb00519a1f90cbb82a12651c2541c6f5e85030faf9c8dd2ec2cc831}
     container_name: iso-${ISO_IDENTITY}-chromium
     # Do not set hostname, extra_hosts, mac_address, dns, dns_search,
     # ports, expose, networks, or ipv4/ipv6_address here. Docker rejects

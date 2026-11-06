@@ -89,6 +89,7 @@ generate_singbox_config() {
               auto_route: true,
               strict_route: true,
               auto_redirect: false,
+              stack: "gvisor",
               dns_mode: "hijack",
               dns_address: ["10.255.254.2"]
             }

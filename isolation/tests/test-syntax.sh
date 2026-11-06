@@ -86,10 +86,19 @@ fi
 
 echo "== syntax: Dockerfile pins sing-box digest =="
 if grep -q 'sha256:0788ffbddab2c68a99a2dd4780bbc50902f159af6f589df3ee74a8389d278279' \
+        "${ISO_ROOT}/egress/Dockerfile" \
+   && grep -q 'linux/arm64 manifest: sha256:5b9f53448637c7d3874e571758f0968f2c0959815494aca938569b40a0a4e752' \
         "${ISO_ROOT}/egress/Dockerfile"; then
-    echo "  digest pin present"
+    echo "  digest pin present (OCI index, arm64 native listed)"
 else
-    echo "sing-box image is not digest-pinned" >&2
+    echo "sing-box image is not digest-pinned as a multi-arch index" >&2
+    fail=1
+fi
+if grep -q 'jlesage/chromium:v26.10.1@sha256:71e2e8468eb00519a1f90cbb82a12651c2541c6f5e85030faf9c8dd2ec2cc831' \
+        "${ISO_ROOT}/compose.yaml"; then
+    echo "  chromium index digest pin present"
+else
+    echo "chromium image is not pinned to the v26.10.1 OCI index" >&2
     fail=1
 fi
 
@@ -119,6 +128,7 @@ assert tls["disable_sni"] is False
 assert tls["server_name"]=="exit-a.example.invalid"
 assert c["inbounds"][1]["strict_route"] is True
 assert c["inbounds"][1]["auto_redirect"] is False
+assert c["inbounds"][1]["stack"]=="gvisor"
 assert c["inbounds"][0]["listen_port"]==53
 assert c["route"]["final"]=="trojan-out"
 assert c["route"]["auto_detect_interface"] is False
@@ -128,6 +138,9 @@ PY
     if command -v sing-box >/dev/null 2>&1; then
         sing-box check -c "${tmp}"
         echo "  sing-box check ok"
+    elif [ -x /tmp/sb1144/sing-box ]; then
+        /tmp/sb1144/sing-box check -c "${tmp}"
+        echo "  sing-box check ok (/tmp/sb1144/sing-box)"
     elif [ -x /tmp/sing-box ]; then
         /tmp/sing-box check -c "${tmp}"
         echo "  sing-box check ok (/tmp/sing-box)"
@@ -203,6 +216,7 @@ fi
 
 echo "== preflight accepts simulated modern host (docker skipped) =="
 if ISO_PREFLIGHT_KERNEL='6.8.0-generic' \
+   ISO_PREFLIGHT_ARCH=x86_64 \
    ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/ubuntu-os-release" \
    ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-8192" \
    ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
@@ -211,6 +225,34 @@ if ISO_PREFLIGHT_KERNEL='6.8.0-generic' \
     echo "  simulated Ubuntu 6.8 / 8 GiB / TUN passed (live Docker not asserted here)"
 else
     echo "simulated modern host preflight failed" >&2
+    fail=1
+fi
+if ISO_PREFLIGHT_KERNEL='6.17.0-oracle' \
+   ISO_PREFLIGHT_ARCH=aarch64 \
+   ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/ubuntu-os-release" \
+   ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-8192" \
+   ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
+   ISO_PREFLIGHT_NFT_KERNEL=1 \
+   "${ISO_ROOT}/scripts/iso-preflight.sh" >/dev/null; then
+    echo "  simulated Ubuntu aarch64 passed (native arm64, not qemu)"
+else
+    echo "aarch64 preflight failed" >&2
+    fail=1
+fi
+pre_arm="$(
+    ISO_PREFLIGHT_KERNEL='6.17.0-oracle' \
+    ISO_PREFLIGHT_ARCH=armv7l \
+    ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/ubuntu-os-release" \
+    ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-8192" \
+    ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
+    ISO_PREFLIGHT_NFT_KERNEL=1 \
+    "${ISO_ROOT}/scripts/iso-preflight.sh" 2>&1 || true
+)"
+if echo "${pre_arm}" | grep -q 'preflight FAILED' && echo "${pre_arm}" | grep -qi 'unsupported arch'; then
+    echo "  armv7 refused (no emulation path)"
+else
+    echo "armv7 preflight did not fail" >&2
+    echo "${pre_arm}" >&2
     fail=1
 fi
 

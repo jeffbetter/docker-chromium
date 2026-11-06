@@ -29,6 +29,7 @@ MEMINFO_FILE="${ISO_PREFLIGHT_MEMINFO:-/proc/meminfo}"
 TUN_PATH="${ISO_PREFLIGHT_TUN:-/dev/net/tun}"
 SKIP_LIVE_DOCKER="${ISO_PREFLIGHT_SKIP_LIVE_DOCKER:-0}"
 NFT_KERNEL_OVERRIDE="${ISO_PREFLIGHT_NFT_KERNEL:-}"
+ARCH_REL="${ISO_PREFLIGHT_ARCH:-$(uname -m)}"
 
 blockers=0
 warnings=0
@@ -102,10 +103,19 @@ nft_kernel_signal() {
 }
 
 say "== isolation host preflight =="
-say "kernel=${KERNEL_REL}"
+say "kernel=${KERNEL_REL} arch=${ARCH_REL}"
 read_os
 say "os=${os_pretty:-unknown} id=${os_id:-?} version=${os_version:-?}"
 say "ref: isolation/HOST.md (will not install Docker on EL7 or rewrite iptables 1.4)"
+
+case "${ARCH_REL}" in
+    x86_64|amd64|aarch64|arm64)
+        ok "native arch ${ARCH_REL} (amd64 or arm64 only; no qemu emulation)"
+        ;;
+    *)
+        block "unsupported arch ${ARCH_REL}. Overlay needs native linux/amd64 or linux/arm64 images (jlesage/chromium:v26.10.1 and sing-box v1.14.4). Do not run via qemu-user/amd64 emulation."
+        ;;
+esac
 
 if has_el7; then
     block "RHEL/CentOS/OL 7 (or *.el7 kernel) is unsupported. CentOS 7 EOL 2024-06-30; Docker CE stopped EL7 packages at v27 (docker-ce-packaging 88a6cdc). Kernel ${KERNEL_REL} is not a supported nft/TUN/cgroup host for this overlay."
@@ -156,6 +166,23 @@ else
         cg="$(docker info --format '{{.CgroupVersion}}' 2>/dev/null || true)"
         if [ -n "${cg}" ]; then
             say "docker cgroup version=${cg}"
+        fi
+        darch="$(docker info --format '{{.Architecture}}' 2>/dev/null || true)"
+        say "docker architecture=${darch:-unknown}"
+        case "${ARCH_REL}" in
+            x86_64|amd64) host_family=amd64 ;;
+            aarch64|arm64) host_family=arm64 ;;
+            *) host_family=other ;;
+        esac
+        case "${darch}" in
+            x86_64|amd64) dock_family=amd64 ;;
+            aarch64|arm64) dock_family=arm64 ;;
+            *) dock_family="${darch:-unknown}" ;;
+        esac
+        if [ "${host_family}" = "amd64" ] || [ "${host_family}" = "arm64" ]; then
+            if [ -n "${darch}" ] && [ "${dock_family}" != "${host_family}" ]; then
+                block "docker architecture ${darch} != host ${ARCH_REL}. Native arm64/amd64 only; do not use qemu emulation."
+            fi
         fi
     fi
     if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
