@@ -16,7 +16,8 @@ iso_resolve_ipv4() {
         echo "${host}"
         return 0
     fi
-    # Resolve once via current DNS (Docker embedded DNS) before kill-switch.
+    # One-shot bootstrap via Docker embedded DNS (127.0.0.11), after nft
+    # bootstrap filter. Visible to the Docker host resolver. Use an IP to skip.
     ipaddr="$(getent ahostsv4 "${host}" 2>/dev/null | awk '{print $1; exit}' || true)"
     if [ -z "${ipaddr}" ]; then
         ipaddr="$(dig +short +time=3 +tries=2 "${host}" A 2>/dev/null | awk 'NR==1 {print; exit}' || true)"
@@ -30,11 +31,12 @@ iso_resolve_ipv4() {
 
 term_handler() {
     echo "egress stopping; leaving kill-switch in place until netns exits"
-    if pgrep -x sing-box >/dev/null 2>&1; then
-        pkill -TERM -x sing-box || true
-        sleep 1
-        pkill -KILL -x sing-box 2>/dev/null || true
+    if [ -f /run/iso/sing-box.pid ]; then
+        kill -TERM "$(cat /run/iso/sing-box.pid)" 2>/dev/null || true
     fi
+    pkill -TERM -x sing-box 2>/dev/null || true
+    sleep 1
+    pkill -KILL -x sing-box 2>/dev/null || true
     exit 0
 }
 trap term_handler TERM INT
@@ -53,6 +55,10 @@ case "${TROJAN_PASSWORD}" in
 esac
 
 mkdir -p /run/iso
+
+# Capture eth0/gw WHILE the Docker default route still exists, then fail-closed.
+apply_bootstrap_filter
+
 TROJAN_IP="$(iso_resolve_ipv4 "${TROJAN_SERVER}")"
 export TROJAN_IP VNC_PORT
 
@@ -63,15 +69,18 @@ generate_singbox_config /run/iso/sing-box.json
 
 if [ "${ISO_SKIP_SINGBOX:-0}" = "1" ]; then
     echo "ISO_SKIP_SINGBOX=1: sing-box not started; kill-switch remains (test mode)"
-    # Keep the netns alive so leak probes can run against a down proxy.
     while true; do
         sleep 3600
     done
 fi
 
-echo "Starting sing-box; if it exits the kill-switch stays and there is no direct fallback"
+echo "Starting sing-box; default_interface=${KILLSWITCH_IFACE}; tun default installed by overlay"
 while true; do
-    sing-box run -c /run/iso/sing-box.json || true
+    sing-box run -c /run/iso/sing-box.json &
+    echo $! > /run/iso/sing-box.pid
+    iso_install_tun_default || true
+    wait "$(cat /run/iso/sing-box.pid)" || true
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sing-box exited; not restoring default routes" >&2
+    rm -f /run/iso/sing-box.pid
     sleep 2
 done

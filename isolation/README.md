@@ -55,8 +55,9 @@ TUN 使用 `auto_route=true`、`strict_route=true`，**关闭** `auto_redirect`�
 egress 容器 (仅此容器有 NET_ADMIN + /dev/net/tun)
     nft inet iso_killswitch  policy drop
     无 eth0 默认路由；仅 TROJAN_IP/32
-    IPv6 关闭；resolv.conf = 127.0.0.1；丢掉 127.0.0.11
-    sing-box TUN tun0 → Trojan(TLS verify + SNI)
+    IPv6 关闭；resolv.conf = 127.0.0.1（sing-box 监听 :53）；丢掉 127.0.0.11
+    sing-box TUN tun0 + default via tun0（default_interface=eth0，禁止 auto_detect）
+    Trojan outbound：TLS verify + SNI，server 为启动时解析的 IPv4
     |
 chromium 容器  network_mode: service:egress
     无 NET_ADMIN / 无 host 网络 / 无 docker.sock
@@ -67,6 +68,8 @@ chromium 容器  network_mode: service:egress
 浏览器 **不** 需要 `NET_ADMIN`。egress 的 capability 只为 TUN/路由/nft。`privileged: false`，不挂 docker socket，不用 host 网络。
 
 代理进程退出时 entrypoint **不会** 把默认路由加回去，而是留在 drop 状态并重启 sing-box。这才是 kill-switch；`network_mode: service:egress` 只是让 Chromium 没有第二条网卡。
+
+实测：删掉 Docker 默认路由后，sing-box 1.14.4 即使配置了 `default_interface` 仍报 `missing default interface`，`auto_route` **不会** 安装 tun 默认路由。overlay 在 `tun0` 出现后执行 `ip route replace default dev tun0`。健康检查要求这条 tun 默认路由存在。
 
 ---
 
@@ -113,7 +116,9 @@ cp identities/identity-b.env.example identities/identity-b.env
 ./scripts/iso-up.sh identities/identity-b.env
 ```
 
-`validate-exits.sh` 会拒绝：同一 Trojan 出口、同一 `ISO_IDENTITY`、同一宿主机 VNC 端口、占位密码、文档用域名、`TROJAN_INSECURE`。
+`validate-exits.sh` 会拒绝：同一 `TROJAN_SERVER:TROJAN_PORT` 元组、同一 `TROJAN_PUBLIC_EXIT_CLAIM`、同一 `ISO_IDENTITY`、同一宿主机 VNC 端口、占位密码、文档用域名、`TROJAN_INSECURE`。
+
+**不同 host:port 不是不同公网 IP 的证明。** 两个 Trojan 端点可以落到同一出口 NAT/anycast。脚本不解析、不探测 live IP。只有你自己确认出口不同时，才填写不同的 `TROJAN_PUBLIC_EXIT_CLAIM`。
 
 每个身份：
 
@@ -128,32 +133,47 @@ cp identities/identity-b.env.example identities/identity-b.env
 
 - Chromium 策略叠加 `chromium/isolation-policies.json`：`WebRtcIPHandling=disable_non_proxied_udp`，并加启动参数 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`。这只是应用层补充；UDP 仍由 kill-switch 丢掉或走 TUN。
 - 优雅退出：`iso-down.sh` 向 `/usr/bin/chromium-browser` 发 SIGTERM，最多等 20s，再 `compose stop`（chromium 30s / egress 10s）。`KEEP_APP_RUNNING=0`，避免 s6 在关机过程中把浏览器拉起来。
-- 健康检查（egress）：nft 表存在、IPv4 默认路由不得指向非 tun0、无 IPv6 默认路由、`resolv.conf` 不含 `127.0.0.11`、`sing-box` 在跑、`tun0` 存在。代理挂了会变 unhealthy，但 **不会** 因此恢复直连。
+- 健康检查（egress）：nft 表存在、IPv4 默认路由不得指向非 tun0、**必须有 default via tun0**、无 IPv6 默认路由、`resolv.conf` 为 `127.0.0.1` 且不含 `127.0.0.11`、`sing-box` 在跑、`tun0` 存在。进程在但没有 tun 默认路由视为不健康。代理挂了会变 unhealthy，但 **不会** 因此恢复直连。
 - 证书：生产配置写死 `insecure: false`。自签证书请用 `TROJAN_CERTIFICATE_PATH` 提供 CA，而不是关校验。
+- 镜像：`ghcr.io/sagernet/sing-box:v1.14.4@sha256:0788ffbddab2c68a99a2dd4780bbc50902f159af6f589df3ee74a8389d278279`。`jlesage/chromium:v26.10.1` **未**钉 digest（未在本环境拉取该镜像）。
+- 密码：走 service `env_file` 字面值，避免 compose 把 `$` 当变量展开。`docker inspect` 仍能看到容器环境里的口令。
 - `/dev/net/tun` 是 TUN 设备节点，不是 docker.sock，也不是 host 网络。
+- `ENABLE_CJK_FONT=1` 会在 Chromium 启动时经 TUN 访问 Alpine 仓库；没有可用 Trojan 时字体安装会失败，不应变成直连。
 
 ---
 
-## 测试
+## 环境依赖（不要默认已经装齐）
+
+| 用途 | 依赖 | 缺了会怎样 |
+| --- | --- | --- |
+| `test-syntax.sh` | `bash`, `python3`（**只要标准库，不要 PyYAML**）, `jq`（生成配置） | 上一轮本地静态测试在缺 PyYAML 时直接失败；现已改为 stdlib |
+| compose 插值回归 | `docker compose` v2 | 跳过密码 `$` 测试 |
+| netns 隔离 | `sudo -n`, `iproute2`, `nftables` | 跳过 netns 段 |
+| Docker 隔离 | Docker 引擎、`/dev/net/tun`、能拉 `ghcr.io/sagernet/sing-box` | 跳过 docker 段 |
+| 真实桌面 | 再加 `jlesage/chromium:v26.10.1`、可用 Trojan | **本仓库测试不跑这一段** |
 
 ```bash
 cd isolation
-./tests/test-syntax.sh        # 始终可跑：shell/compose/JSON/出口校验/sing-box 映射
-./tests/test-isolation.sh     # 含 syntax；在 sudo netns / Docker 可用时做 proxy-down、DNS、IPv6、UDP 探针
+./tests/test-syntax.sh
+./tests/test-isolation.sh
 ```
 
-GitHub Actions：`.github/workflows/isolation-overlay.yml`（只跑 overlay，不构建上游 Chromium 镜像，不向 Docker Hub 推送）。
+GitHub Actions：`.github/workflows/isolation-overlay.yml`（只跑 overlay，不构建上游 Chromium 镜像）。
+
+**已测的是 kill-switch 原语**（无 eth0 默认路由、nft drop、127.0.0.11、IPv6、UDP 无直路、进程死后不恢复默认路由、tun default、127.0.0.1:53 监听）。**不是** 端到端浏览器流量，也 **不是** 真实 Trojan 故障切换。proxy-down / 黑洞节点不能代替 live failover。
 
 ---
 
 ## 未验证（必须当未知）
 
-本次改动 **没有** 连用户的 Trojan、**没有** 在用户服务器部署、**没有** 打开 Gmail/Yahoo/Claude、**没有** 测量任何公网出口 IP。因此：
+本次 **没有** 连用户的 Trojan、**没有** 在用户服务器部署、**没有** 打开 Gmail/Yahoo/Claude、**没有** 测量任何公网出口 IP、**没有** 启动 jlesage/chromium。
 
 - 某身份「现在的公网 IP」：**未验证**
-- 两个出口是否在运营商侧真的不同：**未验证**（只保证配置层拒绝相同 `host:port`）
-- 登录态、Cookie 是否已被站点关联：**未验证**
-- 某台内核是否允许 compose `sysctls` 关闭 IPv6：**未验证**（kill-switch 仍会删 IPv6 默认路由并 nft drop）
+- 两个 Trojan 端点是否同一公网出口：**未验证**（配置层只能管 tuple/claim）
+- 登录态、Cookie、WebRTC 在真实页面上的行为：**未验证**
+- SSH 隧道打到用户机器：**未验证**（只验证了 compose 把 5900 发到宿主机 `127.0.0.1`）
+- Chromium `USER_ID` 对 `/config` 的 chown 是否在目标机成功：**未验证**（jlesage 入口以 root 启动并保留 CHOWN；未拉浏览器镜像）
+- egress 重启时 Docker 对 `network_mode: service:egress` 的命名空间拆掉/重建：**未做 compose 级 teardown 测试**
 
 ---
 

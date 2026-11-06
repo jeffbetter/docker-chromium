@@ -33,6 +33,10 @@ generate_singbox_config() {
         echo "This overlay will not set tls.insecure=true (official ssl.verify=true)." >&2
         return 1
     fi
+    if [ -z "${bind_iface}" ]; then
+        echo "bind/default interface is empty; auto_detect_interface cannot see a default route after kill-switch" >&2
+        return 1
+    fi
 
     alpn_json="$(printf '%s' "${alpn_csv}" | awk -F, '{
         printf "["
@@ -71,6 +75,12 @@ generate_singbox_config() {
           },
           inbounds: [
             {
+              type: "direct",
+              tag: "dns-in",
+              listen: "127.0.0.1",
+              listen_port: 53
+            },
+            {
               type: "tun",
               tag: "tun-in",
               interface_name: "tun0",
@@ -78,7 +88,9 @@ generate_singbox_config() {
               mtu: 1500,
               auto_route: true,
               strict_route: true,
-              auto_redirect: false
+              auto_redirect: false,
+              dns_mode: "hijack",
+              dns_address: ["10.255.254.2"]
             }
           ],
           outbounds: [
@@ -100,11 +112,13 @@ generate_singbox_config() {
           ],
           route: {
             rules: [
+              { inbound: "dns-in", action: "hijack-dns" },
               { action: "sniff" },
               { protocol: "dns", action: "hijack-dns" }
             ],
             final: "trojan-out",
-            auto_detect_interface: true,
+            auto_detect_interface: false,
+            default_interface: $bind_iface,
             default_domain_resolver: "remote-doh"
           }
         }

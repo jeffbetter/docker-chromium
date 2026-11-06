@@ -5,3 +5,4 @@ identities/*.env
 *.bak
 *.tmp
 .iso-*.pid
+.compose.env

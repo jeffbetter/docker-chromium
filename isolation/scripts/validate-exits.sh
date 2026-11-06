@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Fail if two identity env files share the same Trojan exit.
-# Distinct public IPs require distinct actual proxy exits. This script does
-# not probe live IPs and does not claim account unlinkability.
+# Compare configured Trojan *endpoint tuples* (host:port) and optional
+# TROJAN_PUBLIC_EXIT_CLAIM labels.
+#
+# This is NOT proof of distinct public egress IPs. Two different host:port
+# values can still land on the same provider exit / NAT / anycast IP.
+# This script does not probe live IPs and does not claim unlinkability.
 
 set -euo pipefail
 
@@ -12,6 +15,17 @@ usage() {
     cat <<'EOF'
 Usage: validate-exits.sh [env-file ...]
 If no files are given, all isolation/identities/*.env (not *.example) are checked.
+
+Checks:
+  - duplicate ISO_IDENTITY / HOST_VNC_PORT
+  - duplicate TROJAN_SERVER:TROJAN_PORT (same endpoint tuple)
+  - duplicate TROJAN_PUBLIC_EXIT_CLAIM (operator-declared same public exit)
+  - placeholder passwords, docs hostnames, TROJAN_INSECURE
+
+Does not:
+  - resolve hostnames
+  - measure public IPs
+  - prove two endpoints have different exits
 EOF
 }
 
@@ -37,7 +51,9 @@ fi
 declare -A seen_exits=()
 declare -A seen_identities=()
 declare -A seen_ports=()
+declare -A seen_claims=()
 status=0
+missing_claim=0
 
 for file in "${files[@]}"; do
     if [ ! -f "${file}" ]; then
@@ -45,14 +61,14 @@ for file in "${files[@]}"; do
         status=1
         continue
     fi
-    # Load in a subshell-friendly way without leaking into caller loop state.
-    ident="$(awk -F= '/^ISO_IDENTITY=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    server="$(awk -F= '/^TROJAN_SERVER=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    port="$(awk -F= '/^TROJAN_PORT=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    pass="$(awk -F= '/^TROJAN_PASSWORD=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    sni="$(awk -F= '/^TROJAN_SNI=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    vnc="$(awk -F= '/^HOST_VNC_PORT=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
-    insecure="$(awk -F= '/^TROJAN_INSECURE=/ {gsub(/["'\'' ]/, "", $2); print $2; exit}' "${file}")"
+    ident="$(iso_env_get "${file}" ISO_IDENTITY || true)"
+    server="$(iso_env_get "${file}" TROJAN_SERVER || true)"
+    port="$(iso_env_get "${file}" TROJAN_PORT || true)"
+    pass="$(iso_env_get "${file}" TROJAN_PASSWORD || true)"
+    sni="$(iso_env_get "${file}" TROJAN_SNI || true)"
+    vnc="$(iso_env_get "${file}" HOST_VNC_PORT || true)"
+    insecure="$(iso_env_get "${file}" TROJAN_INSECURE || true)"
+    claim="$(iso_env_get "${file}" TROJAN_PUBLIC_EXIT_CLAIM || true)"
     file_bad=0
 
     if [ -z "${ident}" ] || [ -z "${server}" ] || [ -z "${port}" ] || [ -z "${sni}" ]; then
@@ -78,6 +94,7 @@ for file in "${files[@]}"; do
     if [ -n "${seen_identities[${ident}]:-}" ]; then
         echo "REFUSE: duplicate ISO_IDENTITY=${ident} (${file} and ${seen_identities[${ident}]})" >&2
         status=1
+        file_bad=1
     fi
     seen_identities[${ident}]="${file}"
 
@@ -85,26 +102,45 @@ for file in "${files[@]}"; do
         if [ -n "${seen_ports[${vnc}]:-}" ]; then
             echo "REFUSE: HOST_VNC_PORT ${vnc} reused by ${file} and ${seen_ports[${vnc}]}" >&2
             status=1
+            file_bad=1
         fi
         seen_ports[${vnc}]="${file}"
     fi
 
     key="${server}:${port}"
     if [ -n "${seen_exits[${key}]:-}" ]; then
-        echo "REFUSE: ${file} and ${seen_exits[${key}]} share Trojan exit ${key}" >&2
-        echo "A shared exit shares the public IP. This overlay will not invent a second IP." >&2
-        echo "Account unlinkability is NOT provided by Compose isolation alone." >&2
+        echo "REFUSE: ${file} and ${seen_exits[${key}]} share Trojan endpoint tuple ${key}" >&2
+        echo "A shared endpoint tuple is the same server. This is still not a public-IP probe." >&2
         status=1
+        file_bad=1
     else
         seen_exits[${key}]="${file}"
-        if [ "${file_bad}" -eq 0 ]; then
-            echo "OK exit ${key} -> ${ident} (${file})"
+    fi
+
+    if [ -z "${claim}" ]; then
+        missing_claim=1
+        echo "WARN: ${file} has no TROJAN_PUBLIC_EXIT_CLAIM; ${key} uniqueness is NOT a distinct public IP." >&2
+    else
+        if [ -n "${seen_claims[${claim}]:-}" ]; then
+            echo "REFUSE: ${file} and ${seen_claims[${claim}]} share TROJAN_PUBLIC_EXIT_CLAIM=${claim}" >&2
+            echo "Operator declared the same public exit. Different host:port does not split that IP." >&2
+            status=1
+            file_bad=1
+        else
+            seen_claims[${claim}]="${file}"
         fi
+    fi
+
+    if [ "${file_bad}" -eq 0 ]; then
+        echo "OK endpoint-tuple ${key} -> ${ident} (not a public-IP proof)"
     fi
 done
 
+echo "NOTE: endpoint tuples / claims are config-level only. Two Trojan host:port values MAY share one public exit. Live IPs were not probed."
+if [ "${missing_claim}" -ne 0 ]; then
+    echo "NOTE: set distinct TROJAN_PUBLIC_EXIT_CLAIM values only when you independently know the exits differ."
+fi
 if [ "${status}" -eq 0 ]; then
-    echo "Exit check passed for ${#files[@]} identity file(s)."
-    echo "NOTE: this did not probe public IPs or logins; uniqueness is config-level only."
+    echo "Config check passed for ${#files[@]} identity file(s). This is not proof of distinct public IPs."
 fi
 exit "${status}"

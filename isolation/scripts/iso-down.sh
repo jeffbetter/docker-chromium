@@ -35,14 +35,14 @@ grace=20
 if docker inspect -f '{{.State.Running}}' "${chrome}" 2>/dev/null | grep -q true; then
     echo "Sending SIGTERM to Chromium in ${chrome} (graceful profile shutdown)"
     docker exec "${chrome}" sh -c '
-        pids="$(pgrep -f /usr/bin/chromium-browser || true)"
+        pids="$(pgrep -x chromium-browser || pgrep -x chromium || true)"
         if [ -n "${pids}" ]; then
             kill -TERM ${pids} 2>/dev/null || true
         fi
     ' || true
     end=$((SECONDS + grace))
     while [ "${SECONDS}" -lt "${end}" ]; do
-        if ! docker exec "${chrome}" sh -c 'pgrep -f /usr/bin/chromium-browser >/dev/null 2>&1' 2>/dev/null; then
+        if ! docker exec "${chrome}" sh -c 'pgrep -x chromium-browser >/dev/null 2>&1 || pgrep -x chromium >/dev/null 2>&1' 2>/dev/null; then
             echo "Chromium process exited"
             break
         fi

@@ -69,6 +69,6 @@ iso_compose "${ENV_FILE}" up -d --build
 iso_compose "${ENV_FILE}" ps
 echo
 echo "Access (native VNC over SSH tunnel), from your laptop:"
-echo "  ssh -N -L ${HOST_VNC_PORT}:127.0.0.1:${HOST_VNC_PORT} USER@US_LINUX_SERVER"
+echo "  ssh -N -L 127.0.0.1:${HOST_VNC_PORT}:127.0.0.1:${HOST_VNC_PORT} USER@US_LINUX_SERVER"
 echo "  then point a VNC client at 127.0.0.1:${HOST_VNC_PORT}"
 echo "Web GUI is disabled (WEB_LISTENING_PORT=-1)."

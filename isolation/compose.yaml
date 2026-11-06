@@ -3,6 +3,10 @@
 # That share is NOT the kill-switch. The kill-switch is: nft DROP, deleted
 # default routes, Docker DNS removed, IPv6 disabled, TUN/strict_route.
 # Browser has no NET_ADMIN, no host network, no docker.sock.
+#
+# Secrets (TROJAN_PASSWORD, VNC_PASSWORD) MUST come from the service env_file
+# (literal). Do not interpolate them through ${VAR} in this file — compose
+# would expand $ inside passwords.
 
 name: iso-${ISO_IDENTITY:-unset}
 
@@ -24,14 +28,9 @@ services:
       - /dev/net/tun
     security_opt:
       - no-new-privileges:true
+    env_file:
+      - ${ISO_ENV_FILE}
     environment:
-      TROJAN_SERVER: ${TROJAN_SERVER}
-      TROJAN_PORT: ${TROJAN_PORT}
-      TROJAN_PASSWORD: ${TROJAN_PASSWORD}
-      TROJAN_SNI: ${TROJAN_SNI}
-      TROJAN_ALPN: ${TROJAN_ALPN:-h2,http/1.1}
-      TROJAN_CERTIFICATE_PATH: ${TROJAN_CERTIFICATE_PATH:-}
-      TROJAN_BIND_INTERFACE: ${TROJAN_BIND_INTERFACE:-}
       VNC_PORT: "5900"
       ISO_SKIP_SINGBOX: ${ISO_SKIP_SINGBOX:-0}
     ports:
@@ -46,7 +45,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
+      start_period: 25s
     stop_grace_period: 10s
     tmpfs:
       - /run/iso:mode=0755,size=8m
@@ -76,12 +75,13 @@ services:
     shm_size: "2gb"
     stop_grace_period: 30s
     stop_signal: SIGTERM
+    env_file:
+      - ${ISO_ENV_FILE}
     environment:
       USER_ID: ${USER_ID:-1000}
       GROUP_ID: ${GROUP_ID:-1000}
       TZ: ${TZ:-America/New_York}
       LANG: ${LANG:-zh_CN.UTF-8}
-      VNC_PASSWORD: ${VNC_PASSWORD:-}
       KEEP_APP_RUNNING: "0"
       WEB_LISTENING_PORT: "-1"
       VNC_LISTENING_PORT: "5900"

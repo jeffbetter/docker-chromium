@@ -10,7 +10,7 @@ iso_is_ipv4() {
 }
 
 iso_detect_default_v4() {
-    # Prints: "<iface> <gateway-or-dash>"
+    # Prints: "<iface> <gateway-or-empty>"
     line="$(ip -4 route show default 2>/dev/null | head -n 1 || true)"
     if [ -z "${line}" ]; then
         echo ""
@@ -30,21 +30,40 @@ iso_write_resolv_conf() {
         echo "killswitch: skipping resolv.conf rewrite (not in container)"
         return 0
     fi
-    # Replace Docker embedded DNS so queries cannot recurse on the host.
     tmp="$(mktemp)"
     printf 'nameserver 127.0.0.1\noptions ndots:0 timeout:2 attempts:1\n' > "${tmp}"
     if [ -e /etc/resolv.conf ]; then
         if ! cat "${tmp}" > /etc/resolv.conf 2>/dev/null; then
-            # File is a busy mount; bind-mount a replacement if possible.
-            mkdir -p /run/iso
-            cp "${tmp}" /run/iso/resolv.conf
-            mount --bind /run/iso/resolv.conf /etc/resolv.conf 2>/dev/null || \
-                echo "WARN: could not fully replace /etc/resolv.conf" >&2
+            echo "WARN: could not replace /etc/resolv.conf (no SYS_ADMIN for bind-mount)" >&2
         fi
     else
         cp "${tmp}" /etc/resolv.conf
     fi
     rm -f "${tmp}"
+}
+
+# Bootstrap: fail-closed except Docker embedded DNS used to resolve Trojan once.
+iso_apply_nft_bootstrap() {
+    nft delete table inet iso_killswitch 2>/dev/null || true
+    nft -f - <<'EOF'
+table inet iso_killswitch {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif lo accept
+        ct state established,related accept
+    }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+    chain output {
+        type filter hook output priority filter; policy drop;
+        oif lo ip daddr 127.0.0.11 udp dport 53 accept
+        oif lo ip daddr 127.0.0.11 tcp dport 53 accept
+        oif lo ip daddr 127.0.0.0/8 accept
+        ct state established,related accept
+    }
+}
+EOF
 }
 
 iso_apply_nft() {
@@ -67,7 +86,7 @@ table inet iso_killswitch {
     }
     chain output {
         type filter hook output priority filter; policy drop;
-        oif lo ip daddr 127.0.0.11 drop
+        ip daddr 127.0.0.11 drop
         oif lo accept
         oifname "tun0" accept
         ct state established,related accept
@@ -78,7 +97,6 @@ EOF
 }
 
 iso_delete_defaults() {
-    # Remove every default route so eth0/docker0 cannot be a direct path.
     n=0
     while [ "${n}" -lt 16 ]; do
         if ! ip -4 route del default 2>/dev/null; then
@@ -111,18 +129,56 @@ iso_add_trojan_host_route() {
 iso_disable_ipv6_best_effort() {
     for p in /proc/sys/net/ipv6/conf/all/disable_ipv6 \
              /proc/sys/net/ipv6/conf/default/disable_ipv6; do
-        if [ -w "${p}" ]; then
-            echo 1 > "${p}" || true
-        fi
+        { echo 1 > "${p}"; } 2>/dev/null || true
     done
+}
+
+iso_install_tun_default() {
+    # sing-box 1.14.4 auto_route does not install a tun default once the Docker
+    # default route is gone ("missing default interface"), even with
+    # route.default_interface set. Own the default ourselves.
+    n=0
+    while [ "${n}" -lt 50 ]; do
+        if ip link show tun0 >/dev/null 2>&1; then
+            ip -4 route replace default dev tun0
+            return 0
+        fi
+        n=$((n + 1))
+        sleep 0.1
+    done
+    echo "tun0 did not appear; no tun default installed" >&2
+    return 1
+}
+
+iso_capture_egress_iface() {
+    iface="${KILLSWITCH_IFACE:-}"
+    gw="${KILLSWITCH_GW:-}"
+    if [ -z "${iface}" ]; then
+        detected="$(iso_detect_default_v4)"
+        if [ -n "${detected}" ]; then
+            iface="$(echo "${detected}" | awk '{print $1}')"
+            gw="$(echo "${detected}" | awk '{print $2}')"
+        fi
+    fi
+    if [ -z "${iface}" ]; then
+        echo "Unable to detect egress interface (need a default route before kill-switch)" >&2
+        return 1
+    fi
+    export KILLSWITCH_IFACE="${iface}"
+    export KILLSWITCH_GW="${gw}"
+}
+
+apply_bootstrap_filter() {
+    iso_capture_egress_iface
+    iso_disable_ipv6_best_effort
+    iso_apply_nft_bootstrap
+    echo "killswitch: bootstrap filter on (Docker DNS 127.0.0.11:53 only); iface=${KILLSWITCH_IFACE}"
 }
 
 apply_killswitch() {
     trojan_ip="${TROJAN_IP:?TROJAN_IP is required}"
     trojan_port="${TROJAN_PORT:?TROJAN_PORT is required}"
     vnc_port="${VNC_PORT:-5900}"
-    iface="${KILLSWITCH_IFACE:-}"
-    gw="${KILLSWITCH_GW:-}"
 
     if ! iso_is_ipv4 "${trojan_ip}"; then
         echo "TROJAN_IP must be IPv4, got: ${trojan_ip}" >&2
@@ -137,23 +193,9 @@ apply_killswitch() {
         return 1
     fi
 
-    if [ -z "${iface}" ]; then
-        detected="$(iso_detect_default_v4)"
-        if [ -n "${detected}" ]; then
-            iface="$(echo "${detected}" | awk '{print $1}')"
-            gw="$(echo "${detected}" | awk '{print $2}')"
-        fi
-    fi
-    if [ -z "${iface}" ]; then
-        iface="$(ip -4 route show | awk '/src/ {print $3; exit}')"
-    fi
-    if [ -z "${iface}" ]; then
-        echo "Unable to detect egress interface" >&2
-        return 1
-    fi
-
-    export KILLSWITCH_IFACE="${iface}"
-    export KILLSWITCH_GW="${gw}"
+    iso_capture_egress_iface
+    iface="${KILLSWITCH_IFACE}"
+    gw="${KILLSWITCH_GW:-}"
 
     echo "killswitch: iface=${iface} gw=${gw:-none} trojan=${trojan_ip}:${trojan_port} vnc=${vnc_port}"
 
@@ -171,9 +213,12 @@ apply_killswitch() {
 }
 
 killswitch_has_leaky_v4_default() {
-    # Any default that is not tun0 is a direct path.
     if ip -4 route show default 2>/dev/null | grep -v 'dev tun0' | grep -q default; then
         return 0
     fi
     return 1
+}
+
+killswitch_has_tun_default() {
+    ip -4 route show default 2>/dev/null | grep -q 'dev tun0'
 }
