@@ -1,0 +1,15 @@
+# Test-only merge onto isolation/compose.yaml. Not for production.
+# Relaxes health and replaces the browser image so we can create the
+# chromium service with production shared-netns keys (no real Trojan).
+services:
+  egress:
+    image: iso-chromium-egress:test
+    healthcheck:
+      test: ["CMD-SHELL", "true"]
+      interval: 1s
+      timeout: 2s
+      retries: 5
+      start_period: 1s
+  chromium:
+    image: alpine:3.20
+    entrypoint: ["sleep", "180"]

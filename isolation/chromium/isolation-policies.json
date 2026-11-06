@@ -1,0 +1,4 @@
+{
+  "DefaultDownloadDirectory": "/config/Downloads",
+  "WebRtcIPHandling": "disable_non_proxied_udp"
+}
