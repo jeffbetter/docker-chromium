@@ -136,7 +136,7 @@ cp identities/identity-b.env.example identities/identity-b.env
 - 健康检查（egress）：nft 表存在、IPv4 默认路由不得指向非 tun0、**必须有 default via tun0**、无 IPv6 默认路由、`resolv.conf` 为 `127.0.0.1` 且不含 `127.0.0.11`、`sing-box` 在跑、`tun0` 存在。进程在但没有 tun 默认路由视为不健康。代理挂了会变 unhealthy，但 **不会** 因此恢复直连。
 - 证书：生产配置写死 `insecure: false`。自签证书请用 `TROJAN_CERTIFICATE_PATH` 提供 CA，而不是关校验。
 - 镜像：`ghcr.io/sagernet/sing-box:v1.14.4@sha256:0788ffbddab2c68a99a2dd4780bbc50902f159af6f589df3ee74a8389d278279`。`jlesage/chromium:v26.10.1` **未**钉 digest（未在本环境拉取该镜像）。
-- 密码：走 service `env_file` 字面值，避免 compose 把 `$` 当变量展开。`docker inspect` 仍能看到容器环境里的口令。
+- 密码：走 service `env_file` 字面值，避免 compose 把 `$` 当变量展开。`iso-up` 写入 `data/<id>/.compose.env`（mode 600）。`docker inspect` 仍能看到容器环境里的口令（Chromium 也挂了同一 env_file，因此浏览器进程环境里有 Trojan 口令）。
 - `/dev/net/tun` 是 TUN 设备节点，不是 docker.sock，也不是 host 网络。
 - `ENABLE_CJK_FONT=1` 会在 Chromium 启动时经 TUN 访问 Alpine 仓库；没有可用 Trojan 时字体安装会失败，不应变成直连。
 

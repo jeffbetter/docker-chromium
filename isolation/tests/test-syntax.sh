@@ -201,6 +201,13 @@ else
     ISO_IDENTITY=dollar
     ISO_ENV_FILE="${tmpd}/dollar.env"
     iso_escape_env_file "${tmpd}/dollar.env" "${tmpd}/.compose.env"
+    mode="$(stat -c '%a' "${tmpd}/.compose.env")"
+    if [ "${mode}" != "600" ]; then
+        echo ".compose.env mode is ${mode}, expected 600" >&2
+        fail=1
+    else
+        echo "  .compose.env is mode 600"
+    fi
     export ISO_ENV_FILE="${tmpd}/.compose.env" ISO_IDENTITY=dollar HOST_VNC_PORT=5951 ISO_DATA_DIR="${tmpd}"
     rendered="$(docker compose --project-directory "${ISO_ROOT}" --env-file "${tmpd}/.compose.env" \
         -f "${ISO_ROOT}/compose.yaml" -p iso-dollar-test config 2>/dev/null)"

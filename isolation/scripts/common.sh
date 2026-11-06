@@ -108,6 +108,7 @@ iso_escape_env_file() {
         val="${val//\$/\$\$}"
         printf '%s=%s\n' "${key}" "${val}" >> "${dest}"
     done < "${src}"
+    chmod 600 "${dest}"
 }
 
 iso_compose() {
