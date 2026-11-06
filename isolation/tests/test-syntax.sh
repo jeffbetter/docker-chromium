@@ -49,9 +49,11 @@ assert "ISO_ENV_FILE" in text
 chrome = text.split("\n  chromium:\n", 1)[1]
 chrome_svc = chrome.split("\nnetworks:\n", 1)[0]
 assert "- NET_ADMIN" in chrome_svc
+assert "- NET_BIND_SERVICE" not in chrome_svc
 for banned in ("hostname:", "extra_hosts:", "mac_address:", "dns:", "dns_search:", "dns_opt:", "ports:", "expose:", "ipv4_address:", "ipv6_address:"):
     assert not any(ln.startswith("    " + banned) for ln in chrome_svc.splitlines()), banned
 assert 'network_mode: "service:egress"' in chrome_svc
+assert "11-nginx-listen-fix.sh" in chrome_svc
 egress = text.split("\n  egress:\n", 1)[1].split("\n  chromium:\n", 1)[0]
 assert "- NET_ADMIN" in egress
 print("  compose structure ok (no PyYAML)")

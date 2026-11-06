@@ -68,9 +68,10 @@ services:
       egress:
         condition: service_healthy
     cap_drop:
+      # Keep NET_BIND_SERVICE: jlesage nginx is +ep cap_net_bind_service.
+      # Dropping it makes execve EPERM (exit 126) even if WEB_LISTENING_PORT=-1.
       - NET_ADMIN
       - NET_RAW
-      - NET_BIND_SERVICE
       - SYS_MODULE
       - SYS_PTRACE
     security_opt:
@@ -96,6 +97,7 @@ services:
     volumes:
       - ${ISO_DATA_DIR}:/config:rw
       - ./chromium/isolation-policies.json:/etc/chromium/policies/managed/isolation.json:ro
+      - ./chromium/11-nginx-listen-fix.sh:/etc/cont-init.d/11-nginx-listen-fix.sh:ro
     labels:
       iso.identity: ${ISO_IDENTITY}
       iso.role: browser

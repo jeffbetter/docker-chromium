@@ -364,6 +364,13 @@ else
     echo "FAIL: TUN TCP fixture" >&2
     FAILED=1
 fi
+echo "== isolation: official jlesage/chromium process start =="
+if "${TEST_DIR}/test-chromium-start.sh"; then
+    echo "  official image Chromium process + :5900 (not alpine stand-in)"
+else
+    echo "FAIL: official chromium start" >&2
+    FAILED=1
+fi
 
 echo
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
