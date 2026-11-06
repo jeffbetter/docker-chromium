@@ -160,6 +160,56 @@ if [ "${TROJAN_PASSWORD}" != '$(touch /tmp/iso-env-pwned)' ]; then
     fail=1
 fi
 
+echo "== preflight rejects CentOS 7 / kernel 3.10 / 985MiB =="
+pre_out="$(
+    ISO_PREFLIGHT_KERNEL='3.10.0-1160.114.2.el7.x86_64' \
+    ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/centos7-os-release" \
+    ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-985" \
+    ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
+    ISO_PREFLIGHT_NFT_KERNEL=0 \
+    "${ISO_ROOT}/scripts/iso-preflight.sh" 2>&1 || true
+)"
+if echo "${pre_out}" | grep -q 'preflight FAILED' \
+   && echo "${pre_out}" | grep -q 'EL7' \
+   && echo "${pre_out}" | grep -q '4.18' \
+   && echo "${pre_out}" | grep -q '2048 MiB'; then
+    echo "  centos7 profile refused (EL7 + kernel + RAM)"
+else
+    echo "centos7 preflight did not fail as required" >&2
+    echo "${pre_out}" >&2
+    fail=1
+fi
+
+echo "== preflight RAM floor independent of distro =="
+pre_ram="$(
+    ISO_PREFLIGHT_KERNEL='6.8.0-generic' \
+    ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/ubuntu-os-release" \
+    ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-985" \
+    ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
+    ISO_PREFLIGHT_NFT_KERNEL=1 \
+    "${ISO_ROOT}/scripts/iso-preflight.sh" 2>&1 || true
+)"
+if echo "${pre_ram}" | grep -q 'preflight FAILED' && echo "${pre_ram}" | grep -q '2048 MiB'; then
+    echo "  985 MiB refused on a modern kernel too"
+else
+    echo "low-RAM preflight did not fail" >&2
+    echo "${pre_ram}" >&2
+    fail=1
+fi
+
+echo "== preflight accepts simulated modern host (docker skipped) =="
+if ISO_PREFLIGHT_KERNEL='6.8.0-generic' \
+   ISO_PREFLIGHT_OS_RELEASE="${TEST_DIR}/fixtures/ubuntu-os-release" \
+   ISO_PREFLIGHT_MEMINFO="${TEST_DIR}/fixtures/meminfo-8192" \
+   ISO_PREFLIGHT_SKIP_LIVE_DOCKER=1 \
+   ISO_PREFLIGHT_NFT_KERNEL=1 \
+   "${ISO_ROOT}/scripts/iso-preflight.sh" >/dev/null; then
+    echo "  simulated Ubuntu 6.8 / 8 GiB / TUN passed (live Docker not asserted here)"
+else
+    echo "simulated modern host preflight failed" >&2
+    fail=1
+fi
+
 echo "== validate-exits =="
 if "${ISO_ROOT}/scripts/validate-exits.sh" \
         "${TEST_DIR}/fixtures/dup-a.env" "${TEST_DIR}/fixtures/dup-b.env"; then

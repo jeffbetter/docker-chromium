@@ -75,6 +75,8 @@ chromium 容器  network_mode: service:egress
 
 ## 流程 A（推荐）：单身份先跑通
 
+宿主机必须先通过 `./scripts/iso-preflight.sh`（`iso-up.sh` 会调用）。**CentOS 7 / kernel 3.10 / 无 Docker / 约 1 GiB RAM 是部署阻断**，见 `HOST.md`。不要在 EL7 上装不受支持的 Docker 来绕过。
+
 在美国 Linux 服务器上，cwd 为本仓库里的 `isolation/`。
 
 ```bash
@@ -151,6 +153,7 @@ cp identities/identity-b.env.example identities/identity-b.env
 | netns 隔离 | `sudo -n`, `iproute2`, `nftables` | 跳过 netns 段 |
 | Docker 隔离 | Docker 引擎、`/dev/net/tun`、能拉 `ghcr.io/sagernet/sing-box` | 跳过 docker 段 |
 | 真实桌面 | 再加 `jlesage/chromium:v26.10.1`、可用 Trojan | **本仓库测试不跑这一段** |
+| 目标机部署 | 内核 ≥ 4.18、非 EL7、Docker Compose v2、`/dev/net/tun`、MemTotal ≥ 2048 MiB | `iso-preflight.sh` 失败即停；**不会** 在 CentOS 7 上装 Docker |
 
 ```bash
 cd isolation
@@ -174,6 +177,8 @@ GitHub Actions：`.github/workflows/isolation-overlay.yml`（只跑 overlay，�
 - SSH 隧道打到用户机器：**未验证**（只验证了 compose 把 5900 发到宿主机 `127.0.0.1`）
 - Chromium `USER_ID` 对 `/config` 的 chown 是否在目标机成功：**未验证**（jlesage 入口以 root 启动并保留 CHOWN；未拉浏览器镜像）
 - egress 重启时 Docker 对 `network_mode: service:egress` 的命名空间拆掉/重建：**未做 compose 级 teardown 测试**
+- 用户 CentOS 7 目标机（kernel 3.10、无 Docker、无 nft、985 MiB RAM）：**判定为部署阻断**（见 `HOST.md`）。未在该机安装或启动任何容器。
+- 单身份 Chromium 实际 RSS：**未测**（preflight 只拒绝小于 2 GiB 的尝试；4 GiB 也不是已验证够用）
 
 ---
 
@@ -185,7 +190,8 @@ isolation/
   identities/*.env.example
   egress/          # sing-box + kill-switch 镜像
   chromium/        # 额外 managed policy
-  scripts/         # iso-up/down/restart/status/vnc-tunnel/validate-exits
+  HOST.md          # 最低宿主机；CentOS 7 为阻断
+  scripts/         # iso-preflight/up/down/restart/status/vnc-tunnel/validate-exits
   tests/
   data/            # 本地数据（gitignored）
 ```

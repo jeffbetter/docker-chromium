@@ -40,6 +40,9 @@ if iso_placeholder_password "${TROJAN_PASSWORD}"; then
     exit 1
 fi
 
+# Fail closed on EL7 / old kernels / no Docker / low RAM. Does not install anything.
+"${ISO_SCRIPTS_DIR}/iso-preflight.sh"
+
 # Cross-check every real identity env so two stacks cannot silently share an exit.
 shopt -s nullglob
 all_envs=("${ISO_ROOT}/identities"/*.env)
