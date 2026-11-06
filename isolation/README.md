@@ -59,7 +59,7 @@ egress 容器 (仅此容器有 NET_ADMIN + /dev/net/tun)
     sing-box TUN tun0 + default via tun0（default_interface=eth0，禁止 auto_detect）
     Trojan outbound：TLS verify + SNI，server 为启动时解析的 IPv4
     |
-chromium 容器  network_mode: service:egress
+chromium 容器  network_mode: service:egress（禁止 hostname/ports/dns/extra_hosts：Docker 会拒绝）
     无 NET_ADMIN / 无 host 网络 / 无 docker.sock
     /config 独立 volume（Cookie、下载）
     WEB 关闭；VNC 在共享 netns 的 5900

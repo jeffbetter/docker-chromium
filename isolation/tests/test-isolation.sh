@@ -277,8 +277,86 @@ run_docker_isolation() {
     echo "  LIMITATION: proxy-down / process-death != live Trojan failover"
 }
 
+run_compose_shared_netns() {
+    echo "== isolation: compose chromium + service:egress create =="
+    if ! have docker || ! docker compose version >/dev/null 2>&1; then
+        SKIPPED+=("compose shared netns: docker compose missing")
+        return 0
+    fi
+    tmpd="$(mktemp -d)"
+    proj="iso-netns-reg"
+    envf="${tmpd}/identity.env"
+    cat > "${envf}" <<EOF
+ISO_IDENTITY=netnstest
+HOST_VNC_PORT=15912
+TROJAN_SERVER=192.0.2.1
+TROJAN_PORT=443
+TROJAN_PASSWORD=test-only-not-a-real-secret
+TROJAN_SNI=test.example.invalid
+ISO_DATA_DIR=${tmpd}/config
+ISO_SKIP_SINGBOX=1
+EOF
+    mkdir -p "${tmpd}/config"
+    export ISO_ENV_FILE="${envf}" ISO_IDENTITY=netnstest HOST_VNC_PORT=15912 ISO_DATA_DIR="${tmpd}/config" ISO_SKIP_SINGBOX=1
+    compose_netns() {
+        docker compose --project-directory "${ISO_ROOT}" \
+            --env-file "${envf}" \
+            -f "${ISO_ROOT}/compose.yaml" \
+            -f "${TEST_DIR}/fixtures/compose-shared-netns-override.yaml" \
+            -p "${proj}" "$@"
+    }
+    compose_netns down -v --remove-orphans >/dev/null 2>&1 || true
+    cleanup_compose() {
+        compose_netns down -v --remove-orphans >/dev/null 2>&1 || true
+        rm -rf "${tmpd}"
+        unset ISO_ENV_FILE ISO_SKIP_SINGBOX
+    }
+    if ! compose_netns up -d --no-build 2>"${tmpd}/up.err"; then
+        echo "FAIL: compose up shared-netns chromium" >&2
+        cat "${tmpd}/up.err" >&2
+        if grep -qi 'hostname and the network mode' "${tmpd}/up.err"; then
+            echo "FAIL: daemon still rejects hostname + network_mode" >&2
+        fi
+        FAILED=1
+        cleanup_compose
+        return 0
+    fi
+    if ! docker inspect -f '{{.State.Running}}' iso-netnstest-chromium 2>/dev/null | grep -q true; then
+        echo "FAIL: chromium stand-in container not running" >&2
+        docker ps -a --filter name=iso-netnstest >&2 || true
+        FAILED=1
+        cleanup_compose
+        return 0
+    fi
+    netmode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' iso-netnstest-chromium)"
+    case "${netmode}" in
+        container:*)
+            echo "  compose: chromium NetworkMode=${netmode}"
+            ;;
+        *)
+            echo "FAIL: expected container: netns, got ${netmode}" >&2
+            FAILED=1
+            ;;
+    esac
+    chost="$(docker inspect -f '{{.Config.Hostname}}' iso-netnstest-chromium)"
+    ehost="$(docker inspect -f '{{.Config.Hostname}}' iso-netnstest-egress)"
+    if [ "${chost}" = "${ehost}" ]; then
+        echo "  compose: chromium hostname inherited from egress (${chost})"
+    else
+        echo "FAIL: chromium hostname ${chost} != egress ${ehost}" >&2
+        FAILED=1
+    fi
+    if docker inspect iso-netnstest-chromium --format '{{json .Config.Hostname}}' | grep -q 'iso-netnstest-chromium'; then
+        echo "FAIL: chromium still has its own hostname (daemon would reject this)" >&2
+        FAILED=1
+    fi
+    cleanup_compose
+    echo "  LIMITATION: used alpine stand-in, not jlesage/chromium UI"
+}
+
 run_netns_isolation
 run_docker_isolation
+run_compose_shared_netns
 
 echo
 if [ "${#SKIPPED[@]}" -gt 0 ]; then

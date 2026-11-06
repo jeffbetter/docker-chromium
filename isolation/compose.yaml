@@ -57,7 +57,10 @@ services:
   chromium:
     image: ${CHROMIUM_IMAGE:-jlesage/chromium:v26.10.1}
     container_name: iso-${ISO_IDENTITY}-chromium
-    hostname: iso-${ISO_IDENTITY}-chromium
+    # Do not set hostname, extra_hosts, mac_address, dns, dns_search,
+    # ports, expose, networks, or ipv4/ipv6_address here. Docker rejects
+    # those with network_mode: service:* ("conflicting options: hostname
+    # and the network mode"). The browser inherits egress UTS/netns.
     restart: unless-stopped
     privileged: false
     network_mode: "service:egress"
